@@ -4538,6 +4538,12 @@ do
 	local qte_connection;
 	local qte_child_connection;
 	local qte_poll_thread;
+	local listen_for_qte;
+
+	local beam_connection;
+	local beam_child_connection;
+	local beam_poll_thread;
+	local listen_for_beam_qte;
 
 	local function fire_remote()
 		for _, plr in ipairs(players:GetPlayers()) do
@@ -4549,6 +4555,19 @@ do
 			local remote = character:FindFirstChild("RemoteEvent");
 			if (remote) then
 				remote:FireServer(true);
+			end;
+		end;
+	end;
+
+	local function fire_beam_remotes()
+		local beams = workspace:FindFirstChild("Beams");
+		if (not beams) then
+			return;
+		end;
+
+		for _, child in ipairs(beams:GetChildren()) do
+			if (child:IsA("RemoteEvent")) then
+				child:FireServer(true);
 			end;
 		end;
 	end;
@@ -4572,14 +4591,29 @@ do
 		end;
 	end;
 
+	local function cleanup_beam_qte()
+		if (beam_poll_thread) then
+			task.cancel(beam_poll_thread);
+			beam_poll_thread = nil;
+		end;
+
+		if (beam_connection) then
+			beam_connection:Disconnect();
+			beam_connection = nil;
+		end;
+	end;
+
+	local function cleanup_beam_child()
+		if (beam_child_connection) then
+			beam_child_connection:Disconnect();
+			beam_child_connection = nil;
+		end;
+	end;
+
 	local function handle_qte(qte)
 		cleanup_qte();
 
 		if (not qte) then
-			return;
-		end;
-
-		if (not Toggles.auto_qte_hiromi.value) then
 			return;
 		end;
 
@@ -4600,7 +4634,7 @@ do
 		end);
 
 		qte_poll_thread = task.spawn(function()
-			while (Toggles.auto_qte_hiromi.value) do
+			while (Toggles.auto_qte_hiromi.value and qte and qte.Parent) do
 				fire_remote();
 				task.wait(Options.qte_click_delay.value);
 			end;
@@ -4647,8 +4681,57 @@ do
 		end);
 	end;
 
+	local function handle_beam_qte(beam_qte)
+		cleanup_beam_qte();
+
+		if (not beam_qte) then
+			return;
+		end;
+
+		if (not Toggles.auto_qte_hiromi.value) then
+			return;
+		end;
+
+		beam_connection = beam_qte.AncestryChanged:Connect(function(_, parent)
+			if (parent == nil) then
+				cleanup_beam_qte();
+
+				task.defer(function()
+					if (Toggles.auto_qte_hiromi.value) then
+						listen_for_beam_qte();
+					end;
+				end);
+			end;
+		end);
+
+		beam_poll_thread = task.spawn(function()
+			while (Toggles.auto_qte_hiromi.value and beam_qte and beam_qte.Parent) do
+				fire_beam_remotes();
+				task.wait(Options.qte_click_delay.value);
+			end;
+		end);
+	end;
+
+	listen_for_beam_qte = function()
+		cleanup_beam_child();
+
+		local beam_qte = localplayer.PlayerGui:FindFirstChild("BeamQTE");
+
+		if (beam_qte) then
+			task.spawn(handle_beam_qte, beam_qte);
+			return;
+		end;
+
+		beam_child_connection = localplayer.PlayerGui.ChildAdded:Connect(function(child)
+			if (child.Name == "BeamQTE") then
+				cleanup_beam_child();
+				task.spawn(handle_beam_qte, child);
+			end;
+		end);
+	end;
+
 	auto_group:add_toggle("auto_qte_hiromi", {
-		text = "auto qte hiromi";
+		text = "auto qte minigame";
 		default = false;
 	});
 
@@ -4665,9 +4748,12 @@ do
 	Toggles.auto_qte_hiromi:on_changed(function()
 		if (Toggles.auto_qte_hiromi.value) then
 			listen_for_qte();
+			listen_for_beam_qte();
 		else
 			cleanup_qte();
 			cleanup_child();
+			cleanup_beam_qte();
+			cleanup_beam_child();
 		end;
 	end);
 	
