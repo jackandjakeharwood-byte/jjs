@@ -4617,7 +4617,7 @@ do
 			return;
 		end;
 
-		if (not Toggles.auto_qte_hiromi.value) then
+		if (not Toggles.auto_qte_minigame.value) then
 			return;
 		end;
 
@@ -4626,7 +4626,7 @@ do
 				cleanup_qte();
 
 				task.defer(function()
-					if (Toggles.auto_qte_hiromi.value) then
+					if (Toggles.auto_qte_minigame.value) then
 						listen_for_qte();
 					end;
 				end);
@@ -4634,7 +4634,7 @@ do
 		end);
 
 		qte_poll_thread = task.spawn(function()
-			while (Toggles.auto_qte_hiromi.value and qte and qte.Parent) do
+			while (Toggles.auto_qte_minigame.value and qte and qte.Parent) do
 				fire_remote();
 				task.wait(Options.qte_click_delay.value);
 			end;
@@ -4688,7 +4688,7 @@ do
 			return;
 		end;
 
-		if (not Toggles.auto_qte_hiromi.value) then
+		if (not Toggles.auto_qte_minigame.value) then
 			return;
 		end;
 
@@ -4697,7 +4697,7 @@ do
 				cleanup_beam_qte();
 
 				task.defer(function()
-					if (Toggles.auto_qte_hiromi.value) then
+					if (Toggles.auto_qte_minigame.value) then
 						listen_for_beam_qte();
 					end;
 				end);
@@ -4705,7 +4705,7 @@ do
 		end);
 
 		beam_poll_thread = task.spawn(function()
-			while (Toggles.auto_qte_hiromi.value and beam_qte and beam_qte.Parent) do
+			while (Toggles.auto_qte_minigame.value and beam_qte and beam_qte.Parent) do
 				fire_beam_remotes();
 				task.wait(Options.qte_click_delay.value);
 			end;
@@ -4730,7 +4730,7 @@ do
 		end);
 	end;
 
-	auto_group:add_toggle("auto_qte_hiromi", {
+	auto_group:add_toggle("auto_qte_minigame", {
 		text = "auto qte minigame";
 		default = false;
 	});
@@ -4745,8 +4745,8 @@ do
 		compact = true;
 	});
 
-	Toggles.auto_qte_hiromi:on_changed(function()
-		if (Toggles.auto_qte_hiromi.value) then
+	Toggles.auto_qte_minigame:on_changed(function()
+		if (Toggles.auto_qte_minigame.value) then
 			listen_for_qte();
 			listen_for_beam_qte();
 		else
@@ -4758,16 +4758,7 @@ do
 	end);
 	
 	local todo_remote = repstorage.Knit.Knit.Services.TodoService.RE.Activated;
-	local rayparams = RaycastParams.new();
-	rayparams.FilterType = Enum.RaycastFilterType.Exclude;
-
-	local valid_throwables = {
-		Trash = true;
-		Chair = true;
-		Arcade = true;
-		Arcade2 = true;
-		Extinguish = true;
-	};
+	local right_activated_remote = repstorage.Knit.Knit.Services.TodoService.RE.RightActivated;
 
 	local valid_swap_anims = {
 		["rbxassetid://131358603583212"] = true;
@@ -4777,82 +4768,127 @@ do
 
 	local waiting_for_swap = false;
 	local locked_target = nil;
+	local stored_target = nil;
+	local animation_start_distance = nil;
 
-	local max_screen_dist = 140;
+	local function get_target_character(target)
+		if not target then
+			return nil;
+		end;
 
-	local function get_mouse_target()
-		local mouse_pos = userinputservice:GetMouseLocation();
+		if typeof(target) ~= "Instance" then
+			return nil;
+		end;
 
-		local best_target = nil;
-		local best_dist = math.huge;
+		if target:IsA("Player") then
+			return target.Character;
+		end;
 
-		local function check(model, t_type, ref)
-			local hrp = model:FindFirstChild("HumanoidRootPart");
-			if (not hrp) then return; end;
-
-			local screen_pos, on_screen = camera:WorldToViewportPoint(hrp.Position);
-			if (not on_screen) then return; end;
-
-			local dist = (Vector2.new(screen_pos.X, screen_pos.Y) - mouse_pos).Magnitude;
-
-			if (dist < best_dist and dist <= max_screen_dist) then
-				best_dist = dist;
-				best_target = { type = t_type, target = ref or model };
+		if target:IsA("Model") then
+			if target:FindFirstChildOfClass("Humanoid") or target:FindFirstChild("HumanoidRootPart") or players:GetPlayerFromCharacter(target) then
+				return target;
 			end;
 		end;
 
-		local function check_object(model)
-			local part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart");
-			if (not part) then return; end;
-
-			local screen_pos, on_screen = camera:WorldToViewportPoint(part.Position);
-			if (not on_screen) then return; end;
-
-			local dist = (Vector2.new(screen_pos.X, screen_pos.Y) - mouse_pos).Magnitude;
-
-			if (dist < best_dist and dist <= max_screen_dist) then
-				best_dist = dist;
-				best_target = { type = "object", target = model };
+		if target:IsA("BasePart") then
+			local model = target:FindFirstAncestorOfClass("Model");
+			if model and (model:FindFirstChildOfClass("Humanoid") or model:FindFirstChild("HumanoidRootPart") or players:GetPlayerFromCharacter(model)) then
+				return model;
 			end;
 		end;
 
-		for _, player in players:GetPlayers() do
-			if (player ~= localplayer and player.Character) then
-				check(player.Character, "player", player);
-			end;
+		return nil;
+	end;
+
+	local function parse_target(target)
+		if not target or typeof(target) ~= "Instance" then
+			return nil;
 		end;
 
-		local chars = workspace:FindFirstChild("Characters");
-		if (chars) then
-			for _, model in chars:GetChildren() do
-				check(model, "player", model);
-			end;
+		local char = get_target_character(target);
+		if char then
+			return {
+				type = "player";
+				target = char;
+			};
 		end;
 
-		local throwable = workspace.Map and workspace.Map:FindFirstChild("Destructible") and workspace.Map.Destructible:FindFirstChild("Throwable");
+		return {
+			type = "object";
+			target = target;
+		};
+	end;
 
-		if (throwable) then
-			for _, model in throwable:GetChildren() do
-				if (valid_throwables[model.Name]) then
-					check_object(model);
-				end;
-			end;
+	local function capture_animation_start_distance(target_data)
+		animation_start_distance = nil;
+
+		if not target_data or target_data.type ~= "player" then
+			return;
 		end;
 
-		return best_target;
+		local my_character = localplayer.Character;
+		local my_hrp = my_character and my_character:FindFirstChild("HumanoidRootPart");
+		local target_character = get_target_character(target_data.target);
+		local target_hrp = target_character and target_character:FindFirstChild("HumanoidRootPart");
+
+		if my_hrp and target_hrp then
+			animation_start_distance = (my_hrp.Position - target_hrp.Position).Magnitude;
+		end;
 	end;
 
 	local function get_comp_time()
-		if (not locked_target) then
+		if not locked_target then
 			return nil;
 		end;
+
 		local ping = stats.Network.ServerStatsItem["Data Ping"]:GetValue() / 1000;
-		local in_todo_ult = localplayer.Character:GetAttribute("InUlt");
-		local character = locked_target.type == "player" and (locked_target.target:IsA("Player") and locked_target.target.Character or locked_target.target);
-		local value = character and character:GetAttribute("Ragdoll");
+
+		if locked_target.type == "object" then
+			return math.max(0, 0.25 - ping);
+		end;
+
+		local character = get_target_character(locked_target.target);
+		if not character then
+			return math.max(0, 0.25 - ping);
+		end;
+
+		local in_todo_ult = localplayer.Character and localplayer.Character:GetAttribute("InUlt");
+		local value = character:GetAttribute("Ragdoll");
 		local ragdolled = value and value > 0;
-		local wait_time = in_todo_ult and 0.30 or ((locked_target.type == "player" and not ragdolled) and 0.60 or 0.30);
-		return math.max(0, wait_time - ping);
+
+		if in_todo_ult or ragdolled then
+			return math.max(0, 0.30 - ping);
+		end;
+
+		if locked_target.type == "player" then
+			local my_char = localplayer.Character;
+			local my_hrp = my_char and my_char:FindFirstChild("HumanoidRootPart");
+			local target_hrp = character:FindFirstChild("HumanoidRootPart");
+
+			if my_hrp and target_hrp then
+				local distance = animation_start_distance or (my_hrp.Position - target_hrp.Position).Magnitude;
+
+				if distance >= 31 and distance <= 35 then
+					return math.max(0, 0.40 - ping);
+				end;
+
+				local max_distance = 60;
+				local midpoint = 30;
+				local steepness = 0.25;
+				local alpha = 1 / (1 + math.exp(-(distance - midpoint) * steepness));
+				local min_curve = 1 / (1 + math.exp(-(-midpoint) * steepness));
+				local max_curve = 1 / (1 + math.exp(-(max_distance - midpoint) * steepness));
+
+				local normalized_alpha = (alpha - min_curve) / (max_curve - min_curve);
+				normalized_alpha = math.clamp(normalized_alpha, 0, 1);
+
+				local wait_time = 0.30 + (0.60 - 0.30) * normalized_alpha;
+
+				return math.max(0, wait_time - ping);
+			end;
+		end;
+
+		return math.max(0, 0.30 - ping);
 	end;
 
 	local function is_todo()
@@ -4869,15 +4905,6 @@ do
 		return true;
 	end;
 
-	local stored_target = nil;
-	userinputservice.InputBegan:Connect(function(input, processed)
-		if processed then return; end;
-
-		if input.KeyCode == Enum.KeyCode.R and is_todo() then
-			stored_target = get_mouse_target();
-		end;
-	end);
-
 	local function handle_swap_anim(track)
 		if (not Toggles.auto_todo_swap.value) then return; end;
 		local anim = track.Animation;
@@ -4886,7 +4913,11 @@ do
 		if (not valid_swap_anims[anim_id]) then return; end;
 		if (waiting_for_swap) then return; end;
 		if (not is_todo()) then return; end;
-		locked_target = stored_target;
+		locked_target = locked_target or stored_target;
+		if (not locked_target) then return; end;
+		if (not animation_start_distance) then
+			capture_animation_start_distance(locked_target);
+		end;
 		local delay_time = get_comp_time();
 		if (not delay_time) then return; end;
 		waiting_for_swap = true;
@@ -4895,8 +4926,11 @@ do
 			if (not is_todo()) then return; end;
 			if (not locked_target) then return; end;
 			todo_remote:FireServer(false);
+			stored_target = nil;
+			locked_target = nil;
+			animation_start_distance = nil;
 		end);
-	end
+	end;
 
 	local function setup_char(char)
 		local humanoid = char:WaitForChild("Humanoid");
@@ -5114,12 +5148,25 @@ do
 		return old_fire(self, ...);
 	end));
 
-	local last_right_activated_args = nil;
 	local old_namecall; old_namecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		if not checkcaller() then
 			local method = getnamecallmethod();
-			if self == teleport_re and method == "FireServer" then
-				teleport_fire_count = teleport_fire_count + 1;
+			if method == "FireServer" then
+				if self == right_activated_remote or (typeof(self) == "Instance" and self.Name == "RightActivated") then
+					local target = ...;
+					if target ~= nil then
+						task.spawn(function()
+							local parsed = parse_target(target);
+							if parsed then
+								stored_target = parsed;
+								locked_target = parsed;
+								capture_animation_start_distance(parsed);
+							end;
+						end);
+					end;
+				elseif self == teleport_re then
+					teleport_fire_count = teleport_fire_count + 1;
+				end;
 			elseif self == runservice.Stepped and method == "Connect" and Toggles.anti_blackhole and Toggles.anti_blackhole.value then
 				local callback = ...;
 				local info = debug.getinfo(callback);
@@ -6055,6 +6102,11 @@ do
 			end;
 		end;
 
+		if data.mechamaru_color_connection then
+			data.mechamaru_color_connection:Disconnect();
+		end;
+		data.mechamaru_color_connection = nil;
+
 		if data.special_tween then
 			data.special_tween:Cancel();
 		end;
@@ -6362,6 +6414,15 @@ do
 				update();
 			end;
 		end));
+		
+		table.insert(data.connections, {
+			Disconnect = function()
+				if mechamaru_color_connection then
+					mechamaru_color_connection:Disconnect();
+					mechamaru_color_connection = nil;
+				end;
+			end;
+		});
 
 		table.insert(data.connections, {
 			Disconnect = function()
@@ -6379,7 +6440,7 @@ do
 		local player = players:GetPlayerFromCharacter(character);
 		local hrp = character:FindFirstChild("HumanoidRootPart");
 
-		if not player or player == localplayer or not hrp then
+		if not player or not hrp or player == localplayer then
 			return;
 		end;
 
@@ -6410,10 +6471,12 @@ do
 			if not cd then return; end;
 
 			if cd.tween then cd.tween:Cancel(); end;
+			if cd.flash_tween then cd.flash_tween:Cancel(); end;
 
 			if not cd.orig_color then
 				cd.orig_color = cooldown_frame.BackgroundColor3;
 				cd.orig_trans = cooldown_frame.BackgroundTransparency;
+				cd.orig_frame_color = frame.BackgroundColor3;
 			end;
 
 			local is_confiscated = move.Name == "-" and move:GetAttribute("Confiscated");
@@ -6447,14 +6510,14 @@ do
 			end;
 
 			local duration = move.Value;
-			local last_use = move:GetAttribute("LastUse");
+			local ready_at = move:GetAttribute("ReadyAt");
 
-			if typeof(last_use) ~= "number" then
+			if typeof(ready_at) ~= "number" then
 				cooldown_frame.Size = UDim2.new(1,0,0,0);
 				return;
 			end;
 
-			local remaining = duration - (workspace:GetServerTimeNow() - last_use);
+			local remaining = ready_at - workspace:GetServerTimeNow();
 
 			if remaining <= 0 then
 				cooldown_frame.Size = UDim2.new(1,0,0,0);
@@ -6468,6 +6531,18 @@ do
 				TweenInfo.new(remaining, Enum.EasingStyle.Linear),
 				{Size = UDim2.new(1,0,0,0)}
 			);
+
+			cd.tween.Completed:Connect(function(playback_state)
+				if playback_state == Enum.PlaybackState.Completed then
+					frame.BackgroundColor3 = Color3.new(1, 1, 1);
+					cd.flash_tween = tweenservice:Create(
+						frame,
+						TweenInfo.new(1),
+						{BackgroundColor3 = cd.orig_frame_color or Color3.fromRGB(31, 31, 31)}
+					);
+					cd.flash_tween:Play();
+				end;
+			end);
 
 			cd.tween:Play();
 		end;
@@ -6497,7 +6572,7 @@ do
 
 			apply_cooldown(move, frame);
 
-			table.insert(data.connections, move:GetAttributeChangedSignal("LastUse"):Connect(function()
+			table.insert(data.connections, move:GetAttributeChangedSignal("ReadyAt"):Connect(function()
 				apply_cooldown(move, frame);
 			end));
 
@@ -6643,11 +6718,116 @@ do
 		end;
 
 		data.update_visibility = update_visibility;
+		local mechamaru_ult_fill2 = nil;
+
+		do
+			local starter_gui = game:GetService("StarterGui");
+			local main = starter_gui:FindFirstChild("Main");
+
+			if main then
+				local controls = main:FindFirstChild("Controls");
+				local ultimate = controls and controls:FindFirstChild("Ultimate");
+				local bar = ultimate and ultimate:FindFirstChild("Bar");
+
+				if bar then
+					local fill2 = bar:FindFirstChild("Fill2");
+
+					if fill2 then
+						mechamaru_ult_fill2 = fill2:Clone();
+						mechamaru_ult_fill2.Name = "MechamaruFill2";
+						mechamaru_ult_fill2.Parent = ult_container;
+
+						local gradient = mechamaru_ult_fill2:FindFirstChildOfClass("UIGradient");
+
+						if gradient then
+							gradient.Enabled = false;
+						end;
+
+						mechamaru_ult_fill2.AnchorPoint = Vector2.new(0, 1);
+						mechamaru_ult_fill2.Position = UDim2.new(0, 0, 1, 0);
+						mechamaru_ult_fill2.Size = UDim2.new(0.18, 0, 0, 0);
+						mechamaru_ult_fill2.Visible = false;
+					end;
+				end;
+			end;
+		end;
+
+		local mechamaru_color_start = 0;
+		local mechamaru_color_connection = nil;
+
+		local function get_mechamaru_color()
+			local t = (os.clock() - mechamaru_color_start) % 1;
+			local hue = t;
+
+			return Color3.fromHSV(
+				hue,
+				0.698039,
+				1
+			);
+		end;
 
 		local function update_ult()
 			if not ult_fill then return; end;
 			ult_fill.Size = UDim2.new(1, 0, math.clamp((player:GetAttribute("Ultimate") or 0) / 100, 0, 1), 0);
 		end;
+
+		local function update_mechamaru_ult()
+			if not mechamaru_ult_fill2 then return; end;
+
+			local moveset = character:GetAttribute("Moveset");
+
+			if moveset ~= "Mechamaru" then
+				mechamaru_ult_fill2.Visible = false;
+				return;
+			end;
+
+			local ult2 = math.clamp(
+				character:GetAttribute("Ult2") or 0,
+				0,
+				100
+			);
+
+			mechamaru_ult_fill2.Visible = ult2 > 0;
+
+			mechamaru_ult_fill2.Size = UDim2.new(
+				0.18,
+				0,
+				ult2 / 100,
+				0
+			);
+
+			if ult2 > 0 then
+				mechamaru_ult_fill2.BackgroundColor3 = get_mechamaru_color();
+			end;
+		end;
+		mechamaru_color_connection = game:GetService("RunService").RenderStepped:Connect(function()
+			if not mechamaru_ult_fill2 then return; end;
+
+			if character:GetAttribute("Moveset") ~= "Mechamaru" then
+				mechamaru_ult_fill2.Visible = false;
+				return;
+			end;
+
+			local ult2 = math.clamp(
+				character:GetAttribute("Ult2") or 0,
+				0,
+				100
+			);
+
+			if ult2 <= 0 then
+				mechamaru_ult_fill2.Visible = false;
+				return;
+			end;
+
+			mechamaru_ult_fill2.Visible = true;
+			mechamaru_ult_fill2.BackgroundColor3 = get_mechamaru_color();
+			mechamaru_ult_fill2.Size = UDim2.new(
+				0.18,
+				0,
+				ult2 / 100,
+				0
+			);
+		end);
 
 		local evas_gradient = evas_fill and evas_fill:FindFirstChildOfClass("UIGradient");
 		if evas_fill and not evas_gradient then
@@ -6662,6 +6842,7 @@ do
 			NumberSequenceKeypoint.new(0.498039, 0, 1),
 			NumberSequenceKeypoint.new(1, 1, 0),
 		});--]]
+
 		local EVAS_ALIVE_BG  = Color3.fromRGB(0, 85, 127);
 		local EVAS_DEAD_BG   = Color3.fromRGB(40, 40, 40);
 		local EVAS_FILL_BORDER = Color3.fromRGB(0, 0, 0);
@@ -6782,12 +6963,14 @@ do
 		end;
 
 		update_ult();
+		update_mechamaru_ult();
 		update_evade();
 		apply_special_cooldown();
 		update_visibility();
 
 		table.insert(data.connections, player:GetAttributeChangedSignal("Ultimate"):Connect(update_ult));
 		table.insert(data.connections, character:GetAttributeChangedSignal("Evade"):Connect(update_evade));
+		table.insert(data.connections, character:GetAttributeChangedSignal("Ult2"):Connect(update_mechamaru_ult));
 		table.insert(data.connections, character:GetAttributeChangedSignal("LastM2"):Connect(apply_special_cooldown));
 		table.insert(data.connections, character:GetAttributeChangedSignal("M2_CD"):Connect(apply_special_cooldown));
 		table.insert(data.connections, character:GetAttributeChangedSignal("Moveset"):Connect(apply_special_cooldown));
