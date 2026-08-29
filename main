@@ -1,3 +1,4 @@
+-!
 if (getgenv().nil_solutions) then
 	return;
 end;
@@ -521,7 +522,7 @@ do
 		local n = #descs;
 		for i = 1, n do
 			local part = descs[i];
-			if IsA(part, "BasePart") then
+			if part:IsA("BasePart") then
 				noclip_parts[#noclip_parts + 1] = part;
 			end;
 		end;
@@ -1708,14 +1709,14 @@ local function esp1()
 		ESP.Holder = create_object("ScreenGui", { Name = "\n", ScreenInsets = enum.ScreenInsets.DeviceSafeInsets, ZIndexBehavior = enum.ZIndexBehavior.Global, ResetOnSpawn = false, DisplayOrder = 1, IgnoreGuiInset = true, Parent = gethui(); });
 		function ESP.AddTarget(Target)
 			if ESP.Targets[Target] then return; end;
-			local TargetInfo = { Objects = {}, CharacterObjects = {}, CharacterConnection = nil, HealthConnection = nil, ToolConnection = {Added = nil, Removed = nil, ItemChanged = nil, InfoChildAdded = nil, InfoChildRemoved = nil, ItemRenamed = nil}, CurrentTool = get_font_type("none"), TargetName = get_font_type(ESPSettings.Name.UseDisplay and (IsA(Target, "Player") and Target.DisplayName or Target.Name) or Target.Name), DistanceEnding = get_font_type(ESPSettings.Distance.Ending), HealthBarValue = 1, LastHealth = 100, LastMaxHealth = 100, FlagsDelay = 0, CachedFlagsString = "", LastTick = os_clock(), LastLazyUpdate = 0, LastDistanceText = "", LastDistanceValue = -1, };
+			local TargetInfo = { Objects = {}, CharacterObjects = {}, CharacterConnection = nil, HealthConnection = nil, ToolConnection = {Added = nil, Removed = nil, ItemChanged = nil, InfoChildAdded = nil, InfoChildRemoved = nil, ItemRenamed = nil}, CurrentTool = get_font_type("none"), TargetName = get_font_type(ESPSettings.Name.UseDisplay and (Target:IsA("Player") and Target.DisplayName or Target.Name) or Target.Name), DistanceEnding = get_font_type(ESPSettings.Distance.Ending), HealthBarValue = 1, LastHealth = 100, LastMaxHealth = 100, FlagsDelay = 0, CachedFlagsString = "", LastTick = os_clock(), LastLazyUpdate = 0, LastDistanceText = "", LastDistanceValue = -1, };
 			local Objects = TargetInfo.Objects;
 			local ToolConnection = TargetInfo.ToolConnection;
 			local CharacterObjects = TargetInfo.CharacterObjects;
 			local ESPFont = ESP.Font;
 			local ESPFontSize = get_scaled_fontsize();
 			local ESPHolder = ESP.Holder;
-			local is_player = IsA(Target, "Player");
+			local is_player = Target:IsA("Player");
 			local TextAlignments = {
 				["Left"] = "Right",
 				["Right"] = "Left",
@@ -2530,7 +2531,7 @@ local function esp1()
 							return;
 						end;
 						if not CharacterObjects.Humanoid then
-							CharacterObjects.Humanoid = FindFirstChildWhichIsA(CharacterObjects.Character, "Humanoid");
+							CharacterObjects.Humanoid = CharacterObjects.Character:FindFirstChildWhichIsA("Humanoid");
 							if Objects.TargetHolder.Visible then
 								Objects.TargetHolder.Visible = false;
 							end;
@@ -2538,7 +2539,7 @@ local function esp1()
 						end;
 					else
 						if not CharacterObjects.HumanoidRootPart then
-							CharacterObjects.HumanoidRootPart = IsA(Target, "BasePart") and Target or CharacterObjects.Character.PrimaryPart;
+							CharacterObjects.HumanoidRootPart = Target:IsA("BasePart") and Target or CharacterObjects.Character.PrimaryPart;
 							if not CharacterObjects.HumanoidRootPart then
 								if Objects.TargetHolder.Visible then
 									Objects.TargetHolder.Visible = false;
@@ -2560,7 +2561,7 @@ local function esp1()
 					local bodyparts = nil;
 					if cached_settings.BoxDynamicBox then
 						bodyparts = cached_settings.BoxIncludeAccessories and CharacterObjects.Descendants or CharacterObjects.Children;
-						if IsA(Target, "BasePart") then
+						if Target:IsA("BasePart") then
 							bodyparts = {Target};
 						end;
 					end;
