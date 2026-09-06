@@ -36,11 +36,16 @@ if (not LPH_OBFUSCATED) then
 	LPH_JIT = function(...) return ...; end;
 end;
 
-workspace.FallenPartsDestroyHeight = -math.huge;
-
+workspace.FallenPartsDestroyHeight = -50000;
+workspace.FallHeightEnabled = false;
 workspace:GetPropertyChangedSignal("FallenPartsDestroyHeight"):Connect(function()
-	if (workspace.FallenPartsDestroyHeight ~= -math.huge) then
-		workspace.FallenPartsDestroyHeight = -math.huge;
+	if (workspace.FallenPartsDestroyHeight ~= -50000) then
+		workspace.FallenPartsDestroyHeight = -50000;
+	end;
+end);
+workspace:GetPropertyChangedSignal("FallHeightEnabled"):Connect(function()
+	if (workspace.FallHeightEnabled ~= false) then
+		workspace.FallHeightEnabled = false;
 	end;
 end);
 
@@ -4655,20 +4660,36 @@ do
 		end;
 	end;
 
+	local presimulation_connection;
 	local function hook_humanoid(humanoid)
-		humanoid.AnimationPlayed:Connect(function(track)
-			local anim = track.Animation;
-			if not anim then
+		if (presimulation_connection) then
+			presimulation_connection:Disconnect();
+			presimulation_connection = nil;
+		end;
+
+		presimulation_connection = runservice.PreSimulation:Connect(function()
+			if (not Toggles.silent_animation.value) then
+				presimulation_connection:Disconnect();
+				presimulation_connection = nil;
 				return;
 			end;
-			local id = anim.AnimationId;
-			if (ignored_animations[id]) then
-				return;
-			end;
-			if (Toggles.silent_animation.value) then
-				if (Toggles.melee_animation.value and melee_animations[anim.AnimationId]) then
+
+			for _, track in humanoid:GetPlayingAnimationTracks() do
+				local anim = track.Animation;
+				if not anim then
+					continue;
+				end;
+
+				local id = anim.AnimationId;
+				if (ignored_animations[id]) then
+					continue;
+				end;
+
+				if (Toggles.melee_animation.value and melee_animations[id]) then
+					track:AdjustSpeed(0);
 					track:Stop(0);
-				elseif (Toggles.block_animation.value and block_animations[anim.AnimationId]) then
+				elseif (Toggles.block_animation.value and block_animations[id]) then
+					track:AdjustSpeed(0);
 					track:Stop(0);
 				end;
 			end;
@@ -4676,8 +4697,8 @@ do
 	end;
 
 	hook_humanoid(humanoid);
-	localplayer.CharacterAdded:Connect(function()
-		hook_humanoid(localplayer.Character:WaitForChild("Humanoid"));
+	localplayer.CharacterAdded:Connect(function(character)
+		hook_humanoid(character:WaitForChild("Humanoid"));
 	end);
 
 	local stun_connection;
@@ -5042,7 +5063,7 @@ do
 		local target_hrp = target_character and target_character:FindFirstChild("HumanoidRootPart");
 
 		if my_hrp and target_hrp then
-			animation_start_distance = (my_hrp.Position - target_hrp.Position).Magnitude;
+			animation_start_distance = vector3_new(my_hrp.Position.X - target_hrp.Position.X, 0, my_hrp.Position.Z - target_hrp.Position.Z).Magnitude;
 		end;
 	end;
 
@@ -5076,7 +5097,7 @@ do
 			local target_hrp = character:FindFirstChild("HumanoidRootPart");
 
 			if my_hrp and target_hrp then
-				local distance = animation_start_distance or (my_hrp.Position - target_hrp.Position).Magnitude;
+				local distance = animation_start_distance or vector3_new(my_hrp.Position.X - target_hrp.Position.X, 0, my_hrp.Position.Z - target_hrp.Position.Z).Magnitude;
 
 				if distance >= 31 and distance <= 35 then
 					return math.max(0, 0.40 - ping);
@@ -5157,6 +5178,175 @@ do
 		default = false;
 	});
 
+	auto_group:add_toggle("auto_nanami_ratio", {
+		text = "auto nanami ratio";
+		default = false;
+	});
+
+	local nanami_service = repstorage:FindFirstChild("Knit") and repstorage.Knit:FindFirstChild("Knit") and repstorage.Knit.Knit:FindFirstChild("Services") and repstorage.Knit.Knit.Services:FindFirstChild("NanamiService");
+	local nanami_right_activated_remote = nanami_service and nanami_service:FindFirstChild("RE") and nanami_service.RE:FindFirstChild("RightActivated");
+
+	local function get_nanami_right_activated_remote()
+		if nanami_right_activated_remote and nanami_right_activated_remote.Parent then
+			return nanami_right_activated_remote;
+		end;
+		local svc = repstorage:FindFirstChild("Knit") and repstorage.Knit:FindFirstChild("Knit") and repstorage.Knit.Knit.Services:FindFirstChild("NanamiService");
+		if svc and svc:FindFirstChild("RE") then
+			nanami_right_activated_remote = svc.RE:FindFirstChild("RightActivated");
+		end;
+		return nanami_right_activated_remote;
+	end;
+
+	local waiting_for_nanami = false;
+	local nanami_self_firing = false;
+
+	local function is_nanami()
+		if (userinputservice:GetFocusedTextBox()) then
+			return false;
+		end;
+		local char = localplayer.Character;
+		if (not char) then
+			return false;
+		end;
+		if (char:GetAttribute("Moveset") ~= "Nanami") then
+			return false;
+		end;
+		return true;
+	end;
+
+	local function get_nanami_fallback_character()
+		local my_char = localplayer.Character;
+		local my_hrp = my_char and my_char:FindFirstChild("HumanoidRootPart");
+		if not my_hrp then
+			return nil;
+		end;
+
+		local closest_char = nil;
+		local closest_dist = 60;
+
+		local function check_model(model)
+			if not model or model == my_char or not model:IsA("Model") then
+				return;
+			end;
+			local hum = model:FindFirstChildOfClass("Humanoid");
+			local hrp = model:FindFirstChild("HumanoidRootPart");
+			if hum and hum.Health > 0 and hrp then
+				local dist = (my_hrp.Position - hrp.Position).Magnitude;
+				if dist < closest_dist then
+					closest_dist = dist;
+					closest_char = model;
+				end;
+			end;
+		end;
+
+		local chars_folder = workspace:FindFirstChild("Characters");
+		if chars_folder then
+			for _, child in ipairs(chars_folder:GetChildren()) do
+				check_model(child);
+			end;
+		end;
+
+		for _, player in ipairs(players:GetPlayers()) do
+			if player ~= localplayer and player.Character then
+				check_model(player.Character);
+			end;
+		end;
+
+		return closest_char;
+	end;
+
+	local function get_nanami_health_ratio(target)
+		local character = get_target_character(target);
+		if not character or (character:FindFirstChildOfClass("Humanoid") and character:FindFirstChildOfClass("Humanoid").Health <= 0) then
+			character = get_nanami_fallback_character();
+		end;
+
+		if not character then
+			return 1;
+		end;
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid");
+		if humanoid and humanoid.MaxHealth and humanoid.MaxHealth > 0 then
+			local hp = humanoid.Health;
+			local max_hp = humanoid.MaxHealth;
+			if typeof(hp) == "number" and typeof(max_hp) == "number" and hp >= 0 and max_hp > 0 then
+				return math.clamp(hp / max_hp, 0, 1);
+			end;
+		end;
+
+		return 1;
+	end;
+
+	local function get_nanami_comp_time(target)
+		local ratio = get_nanami_health_ratio(target);
+		local hp_percent = math.clamp(ratio * 100, 0, 100);
+
+		local base_time;
+		if hp_percent >= 65 and hp_percent <= 75 then
+			base_time = 0.50;
+		else
+			local smooth_ratio = math.clamp(ratio, 0, 1);
+			smooth_ratio = smooth_ratio * smooth_ratio * (3 - 2 * smooth_ratio);
+
+			local min_timing = 0.45;
+			local max_timing = 0.62;
+			base_time = min_timing + (max_timing - min_timing) * smooth_ratio;
+		end;
+
+		local jitter = (math.random() - 0.5) * 0.01;
+		local wait_time = base_time + jitter;
+
+		if typeof(wait_time) ~= "number" or wait_time ~= wait_time then
+			return 0.6;
+		end;
+
+		return math.clamp(wait_time, 0.15, 0.62);
+	end;
+
+	local function handle_nanami_right_activated(raw_target)
+		if not Toggles.auto_nanami_ratio or not Toggles.auto_nanami_ratio.value then
+			return;
+		end;
+
+		if not is_nanami() then
+			return;
+		end;
+
+		if waiting_for_nanami then
+			return;
+		end;
+
+		waiting_for_nanami = true;
+
+		local delay_time = get_nanami_comp_time(raw_target);
+
+		task.delay(delay_time, function()
+			if not is_nanami() or not Toggles.auto_nanami_ratio or not Toggles.auto_nanami_ratio.value then
+				waiting_for_nanami = false;
+				return;
+			end;
+
+			local remote = get_nanami_right_activated_remote();
+			if remote then
+				local fire_target = raw_target;
+				if typeof(fire_target) == "Instance" then
+					if not fire_target.Parent then
+						local fallback = get_nanami_fallback_character();
+						if fallback then
+							fire_target = fallback:FindFirstChild("HumanoidRootPart") or fallback;
+						end;
+					end;
+				end;
+
+				nanami_self_firing = true;
+				remote:FireServer(fire_target);
+				nanami_self_firing = false;
+			end;
+
+			waiting_for_nanami = false;
+		end);
+	end;
+
 	dash_group:add_toggle("dash_cooldown", {
 		text = "dash cooldown";
 		default = false;
@@ -5184,22 +5374,6 @@ do
 
 	local knit = require(repstorage.Knit.Knit);
 	local movement_controller = knit.GetController("MovementController");
-	local original = rawget(movement_controller, "DashRequest");
-	local dash;
-	local upvals = debug.getupvalues(original);
-	if #upvals >= 6 and type(upvals[4]) == "number" and type(upvals[6]) == "number" then
-		dash = original;
-	else
-		for _, v in pairs(upvals) do
-			if type(v) == "function" then
-				local sub = debug.getupvalues(v);
-				if #sub >= 6 and type(sub[4]) == "number" and type(sub[6]) == "number" then
-					dash = v;
-					break;
-				end;
-			end;
-		end;
-	end;
 
 	local last_front_dash = 0;
 	userinputservice.InputBegan:Connect(function(input, gpe)
@@ -5405,7 +5579,7 @@ do
 
 	local function is_target_protected(target_char)
 		if not target_char then return true; end;
-		if target_char:FindFirstChild("DomainTag", true) or target_char:FindFirstChild("IFrame", true) then
+		if target_char:FindFirstChild("DomainTag", true) or target_char:FindFirstChild("DomainData", true) or target_char:FindFirstChild("IFrame", true) then
 			return true;
 		end;
 		return false;
@@ -5415,6 +5589,15 @@ do
 		task_spawn(function()
 			while Toggles.point_two_kill_all and Toggles.point_two_kill_all.value and domain_kill_all_state == target_state and domain_kill_all_token == token do
 				local target_players = players:GetPlayers();
+				table.sort(target_players, function(a, b)
+					local a_char = a.Character;
+					local b_char = b.Character;
+					local a_hum = a_char and a_char:FindFirstChildOfClass("Humanoid");
+					local b_hum = b_char and b_char:FindFirstChildOfClass("Humanoid");
+					local a_health = a_hum and a_hum.Health or math.huge;
+					local b_health = b_hum and b_hum.Health or math.huge;
+					return a_health < b_health;
+				end);
 				for _, plr in ipairs(target_players) do
 					if not (Toggles.point_two_kill_all and Toggles.point_two_kill_all.value and domain_kill_all_state == target_state and domain_kill_all_token == token) then
 						break;
@@ -5604,17 +5787,29 @@ do
 		if not checkcaller() then
 			local method = getnamecallmethod();
 			if method == "FireServer" then
-				if self == right_activated_remote or (typeof(self) == "Instance" and self.Name == "RightActivated") then
-					local target = ...;
-					if target ~= nil then
-						task.spawn(function()
-							local parsed = parse_target(target);
-							if parsed then
-								stored_target = parsed;
-								locked_target = parsed;
-								capture_animation_start_distance(parsed);
+				if (typeof(self) == "Instance" and self.Name == "RightActivated") or self == right_activated_remote or self == nanami_right_activated_remote then
+					local parent_service = self.Parent and self.Parent.Parent and self.Parent.Parent.Name;
+					if self == right_activated_remote or parent_service == "TodoService" then
+						local target = ...;
+						if target ~= nil then
+							task.spawn(function()
+								local parsed = parse_target(target);
+								if parsed then
+									stored_target = parsed;
+									locked_target = parsed;
+									capture_animation_start_distance(parsed);
+								end;
+							end);
+						end;
+					elseif self == nanami_right_activated_remote or parent_service == "NanamiService" then
+						if not nanami_self_firing then
+							local target = ...;
+							if target ~= nil then
+								task.spawn(function()
+									handle_nanami_right_activated(target);
+								end);
 							end;
-						end);
+						end;
 					end;
 				elseif self == teleport_re then
 					teleport_fire_count = teleport_fire_count + 1;
@@ -5632,6 +5827,8 @@ do
 
 	localplayer.CharacterAdded:Connect(function()
 		teleport_fire_count = 0;
+		waiting_for_nanami = false;
+		nanami_self_firing = false;
 	end);
 	
 	stun_group:add_button("secret", function()
@@ -6273,6 +6470,12 @@ do
 		default = false;
 		tooltip = "green means unstunned, red means stunned";
 	});
+
+	reveal_group:add_toggle("burst_visualizer", {
+		text = "burst visualizer";
+		default = false;
+	});
+
 	reveal_group:add_toggle("reveal_cash", {
 		text = "reveal cash";
 		default = false;
@@ -6329,9 +6532,54 @@ do
 	local cd_initialized_players = {};
 	local stun_template_cache = nil;
 
+	local burst_connections = {};
+	local burst_vis_data = {};
+
+	local function is_character_dead(char)
+		if not char then return true; end;
+		local char_humanoid = char:FindFirstChildOfClass("Humanoid");
+		if not char_humanoid then return true; end;
+		local hum_state = char_humanoid:GetState();
+		local is_dead = char_humanoid.Health <= 0 and (
+			hum_state == Enum.HumanoidStateType.Dead or
+			hum_state == Enum.HumanoidStateType.Physics or
+			hum_state == Enum.HumanoidStateType.PlatformStanding
+		);
+		local info_folder = char:FindFirstChild("Info");
+		local has_no_death = info_folder and info_folder:FindFirstChild("NoDeath") ~= nil;
+		return is_dead and not has_no_death;
+	end;
+
+	local function clear_burst_visual(char)
+		if not char then return; end;
+		local data = burst_vis_data[char];
+		if data then
+			if data.highlight then
+				data.highlight:Destroy();
+				data.highlight = nil;
+			end;
+			if data.icon then
+				data.icon:Destroy();
+				data.icon = nil;
+			end;
+		end;
+		local icon = char:FindFirstChild("BurstIcon");
+		if icon and icon:IsA("BillboardGui") then
+			icon:Destroy();
+		end;
+		local highlight = char:FindFirstChild("Highlight");
+		if highlight and highlight:IsA("Highlight") and highlight.FillColor == Color3.fromRGB(255, 255, 255) and highlight.OutlineColor == Color3.fromRGB(255, 255, 255) then
+			highlight:Destroy();
+		end;
+	end;
+
 	local SPECIAL_READY_STYLES = {
 		Default = {
 			Color = Color3.fromRGB(85, 170, 255),
+			Gradient = ColorSequence.new(
+				Color3.fromRGB(0, 170, 255),
+				Color3.fromRGB(255, 255, 255)
+			),
 		},
 
 		Gojo = {
@@ -6502,10 +6750,50 @@ do
 			),
 		},
 
+		Uro = {
+			Color = Color3.fromRGB(170, 255, 255),
+			Gradient = ColorSequence.new(
+				Color3.fromRGB(255, 85, 127),
+				Color3.fromRGB(255, 255, 255)
+			),
+		},
+
 		Hanami = {
 			Color = Color3.fromRGB(172, 203, 163),
 			Gradient = ColorSequence.new(
 				Color3.fromRGB(79, 69, 49),
+				Color3.fromRGB(255, 255, 255)
+			),
+		},
+
+		Heian = {
+			Color = Color3.fromRGB(85, 0, 0),
+			Gradient = ColorSequence.new(
+				Color3.fromRGB(0, 170, 255),
+				Color3.fromRGB(255, 255, 255)
+			),
+		},
+
+		Goku = {
+			Color = Color3.fromRGB(255, 0, 0),
+			Gradient = ColorSequence.new(
+				Color3.new(1, 1, 0),
+				Color3.fromRGB(255, 255, 255)
+			),
+		},
+
+		Mokou = {
+			Color = Color3.fromRGB(255, 170, 0),
+			Gradient = ColorSequence.new(
+				Color3.new(1, 0.333333, 0),
+				Color3.fromRGB(255, 255, 255)
+			),
+		},
+
+		Chara = {
+			Color = Color3.fromRGB(255, 0, 0),
+			Gradient = ColorSequence.new(
+				Color3.new(0.333333, 0, 0),
 				Color3.fromRGB(255, 255, 255)
 			),
 		},
@@ -7085,6 +7373,13 @@ do
 
 		local ult_container = reveal:FindFirstChild("Ult", true);
 		local ult_fill = ult_container and ult_container:FindFirstChild("Fill", true);
+		local ult_gradient = ult_fill and (ult_fill:FindFirstChildOfClass("UIGradient") or ult_fill:FindFirstChild("Gradient"));
+
+		if ult_fill and not ult_gradient then
+			ult_gradient = Instance.new("UIGradient");
+			ult_gradient.Name = "Gradient";
+			ult_gradient.Parent = ult_fill;
+		end;
 
 		local evasive_frame = reveal:FindFirstChild("Evasive", true);
 		local evas_fill = evasive_frame and evasive_frame:FindFirstChild("Fill", true);
@@ -7221,6 +7516,36 @@ do
 		local function update_ult()
 			if not ult_fill then return; end;
 			ult_fill.Size = UDim2.new(1, 0, math.clamp((player:GetAttribute("Ultimate") or 0) / 100, 0, 1), 0);
+
+			if not ult_gradient then
+				ult_gradient = ult_fill:FindFirstChildOfClass("UIGradient") or ult_fill:FindFirstChild("Gradient");
+				if not ult_gradient then
+					ult_gradient = Instance.new("UIGradient");
+					ult_gradient.Name = "Gradient";
+					ult_gradient.Parent = ult_fill;
+				end;
+			end;
+
+			local moveset = character:GetAttribute("Moveset");
+			if typeof(moveset) ~= "string" or moveset == "" then
+				moveset = "Default";
+			end;
+
+			local style = SPECIAL_READY_STYLES[moveset];
+			if not style then
+				style = SPECIAL_READY_STYLES.Default;
+			end;
+
+			ult_fill.BackgroundColor3 = style.Color;
+			ult_fill.BackgroundTransparency = 0;
+
+			if style.Gradient then
+				ult_gradient.Enabled = true;
+				ult_gradient.Color = style.Gradient;
+				ult_gradient.Transparency = NumberSequence.new(0);
+			else
+				ult_gradient.Enabled = false;
+			end;
 		end;
 
 		local function update_mechamaru_ult()
@@ -7228,7 +7553,7 @@ do
 
 			local moveset = character:GetAttribute("Moveset");
 
-			if moveset ~= "Mechamaru" then
+			if moveset ~= "Mechamaru" and moveset ~= "Mahito" and moveset ~= "Uro" then
 				mechamaru_ult_fill2.Visible = false;
 				return;
 			end;
@@ -7252,10 +7577,11 @@ do
 				mechamaru_ult_fill2.BackgroundColor3 = get_mechamaru_color();
 			end;
 		end;
-		mechamaru_color_connection = game:GetService("RunService").RenderStepped:Connect(function()
+		mechamaru_color_connection = runservice.RenderStepped:Connect(function()
 			if not mechamaru_ult_fill2 then return; end;
 
-			if character:GetAttribute("Moveset") ~= "Mechamaru" then
+			local moveset = character:GetAttribute("Moveset");
+			if moveset ~= "Mechamaru" and moveset ~= "Mahito" and moveset ~= "Uro" then
 				mechamaru_ult_fill2.Visible = false;
 				return;
 			end;
@@ -7289,14 +7615,24 @@ do
 			evas_gradient.Parent = evas_fill;
 		end;
 
-		--[[local EVAS_GRADIENT_SEQ = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0, 0.333333),
-			NumberSequenceKeypoint.new(0.498039, 0, 1),
-			NumberSequenceKeypoint.new(1, 1, 0),
-		});--]]
+		local EVAS_GRADIENT_COLOR = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.new(0, 0.333333, 0.498039)),
+			ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
+		});
+		local EVAS_GRADIENT_TRANS = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(1, 0),
+		});
+
+		if evas_gradient then
+			evas_gradient.Color = EVAS_GRADIENT_COLOR;
+			evas_gradient.Transparency = EVAS_GRADIENT_TRANS;
+			evas_gradient.Enabled = true;
+		end;
 
 		local EVAS_ALIVE_BG  = Color3.fromRGB(0, 85, 127);
 		local EVAS_DEAD_BG   = Color3.fromRGB(40, 40, 40);
+		local EVAS_BURST_BG  = Color3.fromRGB(255, 255, 255);
 		local EVAS_FILL_BORDER = Color3.fromRGB(0, 0, 0);
 
 		if evasive_frame then
@@ -7306,29 +7642,36 @@ do
 			evasive_frame.BorderSizePixel = 2;
 		end;
 
-		--[[if evas_gradient then
-			evas_gradient.Transparency = EVAS_GRADIENT_SEQ;
-			evas_gradient.Enabled = true;
-		end;--]]
-
 		local function update_evade()
 			if not evas_fill then return; end;
 			local pct = math.clamp((character:GetAttribute("Evade") or 0) / 50, 0, 1);
 			evas_fill.Size = UDim2.new(1, 0, pct, 0);
 
-			local char_humanoid = character:FindFirstChildOfClass("Humanoid");
-			local is_dead = char_humanoid and char_humanoid.Health <= 0;
-			local info_folder = character:FindFirstChild("Info");
-			local has_no_death = info_folder and info_folder:FindFirstChild("NoDeath") ~= nil;
+			local is_dead = is_character_dead(character);
+			local is_bursting = character:GetAttribute("Burst") == true;
 
-			if is_dead and not has_no_death then
+			if is_dead then
+				clear_burst_visual(character);
+				if evas_gradient then
+					evas_gradient.Enabled = false;
+				end;
 				evas_fill.BackgroundColor3 = EVAS_DEAD_BG;
+			elseif is_bursting then
+				if evas_gradient then
+					evas_gradient.Enabled = false;
+				end;
+				evas_fill.BackgroundColor3 = EVAS_BURST_BG;
 			else
+				if evas_gradient then
+					evas_gradient.Enabled = true;
+				end;
 				evas_fill.BackgroundColor3 = EVAS_ALIVE_BG;
 			end;
 			evas_fill.BackgroundTransparency = 0;
 			evas_fill.BorderColor3 = EVAS_FILL_BORDER;
 		end;
+
+		data.update_evade = update_evade;
 
 		local function apply_special_cooldown()
 			if not special_clone then
@@ -7422,10 +7765,15 @@ do
 
 		table.insert(data.connections, player:GetAttributeChangedSignal("Ultimate"):Connect(update_ult));
 		table.insert(data.connections, character:GetAttributeChangedSignal("Evade"):Connect(update_evade));
+		table.insert(data.connections, character:GetAttributeChangedSignal("Burst"):Connect(update_evade));
 		table.insert(data.connections, character:GetAttributeChangedSignal("Ult2"):Connect(update_mechamaru_ult));
 		table.insert(data.connections, character:GetAttributeChangedSignal("LastM2"):Connect(apply_special_cooldown));
 		table.insert(data.connections, character:GetAttributeChangedSignal("M2_CD"):Connect(apply_special_cooldown));
-		table.insert(data.connections, character:GetAttributeChangedSignal("Moveset"):Connect(apply_special_cooldown));
+		table.insert(data.connections, character:GetAttributeChangedSignal("Moveset"):Connect(function()
+			apply_special_cooldown();
+			update_mechamaru_ult();
+			update_ult();
+		end));
 
 		local evade_info_conns = {};
 		local function hook_evade_info(info)
@@ -7446,6 +7794,13 @@ do
 			if child.Name == "Info" then
 				hook_evade_info(child);
 				update_evade();
+			elseif child:IsA("Humanoid") then
+				table.insert(data.connections, child.HealthChanged:Connect(update_evade));
+				table.insert(data.connections, child.StateChanged:Connect(function()
+					update_evade();
+				end));
+				table.insert(data.connections, child.Died:Connect(update_evade));
+				update_evade();
 			end;
 		end));
 
@@ -7459,6 +7814,10 @@ do
 		local char_hum = character:FindFirstChildOfClass("Humanoid");
 		if char_hum then
 			table.insert(data.connections, char_hum.HealthChanged:Connect(update_evade));
+			table.insert(data.connections, char_hum.StateChanged:Connect(function()
+				update_evade();
+			end));
+			table.insert(data.connections, char_hum.Died:Connect(update_evade));
 		end;
 	end;
 
@@ -7547,6 +7906,201 @@ do
 
 	if Toggles.stun_checker then
 		Toggles.stun_checker:on_changed(cd_evaluate);
+	end;
+
+	local function update_burst_visual(char)
+		if not Toggles.burst_visualizer or not Toggles.burst_visualizer.value then
+			clear_burst_visual(char);
+			return;
+		end;
+
+		if not char or not char.Parent then
+			clear_burst_visual(char);
+			return;
+		end;
+
+		if is_character_dead(char) then
+			clear_burst_visual(char);
+			return;
+		end;
+
+		local is_bursting = char:GetAttribute("Burst");
+		if is_bursting == true then
+			local data = burst_vis_data[char];
+			if not data then
+				data = {};
+				burst_vis_data[char] = data;
+			end;
+
+			if not data.highlight or not data.highlight.Parent then
+				local highlight = Instance.new("Highlight");
+				highlight.Name = "Highlight";
+				highlight.FillColor = Color3.fromRGB(255, 255, 255);
+				highlight.OutlineColor = Color3.fromRGB(255, 255, 255);
+				highlight.FillTransparency = 0.95;
+				highlight.OutlineTransparency = 0;
+				highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop;
+				highlight.Adornee = char;
+				highlight.Parent = char;
+				data.highlight = highlight;
+			end;
+
+			if not data.icon or not data.icon.Parent then
+				local utils = repstorage:FindFirstChild("Utils");
+				local damage = utils and utils:FindFirstChild("Damage");
+				local burst_folder = damage and damage:FindFirstChild("BurstIcon");
+				local template = burst_folder and burst_folder:FindFirstChild("BurstIcon");
+
+				if template then
+					local clone = template:Clone();
+					local icon = clone:FindFirstChild("Icon");
+					local glow = icon:FindFirstChild("Glow");
+					if glow and (glow:IsA("ImageLabel") or glow:IsA("ImageButton")) then
+						glow.ImageTransparency = 0;
+					end;
+
+					if clone:IsA("BillboardGui") then
+						clone.Adornee = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head") or char;
+						clone.Enabled = true;
+					end;
+					clone.Parent = char;
+					data.icon = clone;
+				end;
+			end;
+		else
+			clear_burst_visual(char);
+		end;
+	end;
+
+	local function hook_character_burst(char)
+		if not char then return; end;
+
+		if burst_connections[char] then
+			for _, c in ipairs(burst_connections[char]) do
+				c:Disconnect();
+			end;
+		end;
+		burst_connections[char] = {};
+
+		local attr_conn = char:GetAttributeChangedSignal("Burst"):Connect(function()
+			update_burst_visual(char);
+		end);
+		table.insert(burst_connections[char], attr_conn);
+
+		local function hook_hum(hum)
+			table.insert(burst_connections[char], hum.HealthChanged:Connect(function()
+				update_burst_visual(char);
+			end));
+			table.insert(burst_connections[char], hum.StateChanged:Connect(function()
+				update_burst_visual(char);
+			end));
+			table.insert(burst_connections[char], hum.Died:Connect(function()
+				update_burst_visual(char);
+			end));
+		end;
+
+		local hum = char:FindFirstChildOfClass("Humanoid");
+		if hum then hook_hum(hum); end;
+
+		local child_conn = char.ChildAdded:Connect(function(child)
+			if child:IsA("Humanoid") then
+				hook_hum(child);
+				update_burst_visual(char);
+			elseif child.Name == "Info" then
+				table.insert(burst_connections[char], child.ChildAdded:Connect(function()
+					update_burst_visual(char);
+				end));
+				table.insert(burst_connections[char], child.ChildRemoved:Connect(function()
+					update_burst_visual(char);
+				end));
+				update_burst_visual(char);
+			end;
+		end);
+		table.insert(burst_connections[char], child_conn);
+
+		local info = char:FindFirstChild("Info");
+		if info then
+			table.insert(burst_connections[char], info.ChildAdded:Connect(function()
+				update_burst_visual(char);
+			end));
+			table.insert(burst_connections[char], info.ChildRemoved:Connect(function()
+				update_burst_visual(char);
+			end));
+		end;
+
+		local ancestry_conn = char.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				clear_burst_visual(char);
+				if burst_connections[char] then
+					for _, c in ipairs(burst_connections[char]) do
+						c:Disconnect();
+					end;
+					burst_connections[char] = nil;
+				end;
+				burst_vis_data[char] = nil;
+			end;
+		end);
+		table.insert(burst_connections[char], ancestry_conn);
+
+		update_burst_visual(char);
+	end;
+
+	local function hook_player_burst(player)
+		if player.Character then
+			task.spawn(hook_character_burst, player.Character);
+		end;
+		player.CharacterAdded:Connect(function(char)
+			task.spawn(hook_character_burst, char);
+		end);
+	end;
+
+	for _, player in ipairs(players:GetPlayers()) do
+		hook_player_burst(player);
+	end;
+	players.PlayerAdded:Connect(hook_player_burst);
+
+	local chars_folder = workspace:FindFirstChild("Characters");
+	if chars_folder then
+		for _, child in ipairs(chars_folder:GetChildren()) do
+			if child:IsA("Model") then
+				task.spawn(hook_character_burst, child);
+			end;
+		end;
+		chars_folder.ChildAdded:Connect(function(child)
+			if child:IsA("Model") then
+				task.spawn(hook_character_burst, child);
+			end;
+		end);
+	end;
+
+	if Toggles.burst_visualizer then
+		Toggles.burst_visualizer:on_changed(function(enabled)
+			if not enabled then
+				for char, _ in pairs(burst_vis_data) do
+					clear_burst_visual(char);
+				end;
+			else
+				for _, player in ipairs(players:GetPlayers()) do
+					if player.Character then
+						update_burst_visual(player.Character);
+					end;
+				end;
+				local chars = workspace:FindFirstChild("Characters");
+				if chars then
+					for _, child in ipairs(chars:GetChildren()) do
+						if child:IsA("Model") then
+							update_burst_visual(child);
+						end;
+					end;
+				end;
+			end;
+
+			for _, data in pairs(cd_character_data) do
+				if data.update_evade then
+					data.update_evade();
+				end;
+			end;
+		end);
 	end;
 
 	local rk_connections = {};
